@@ -19,6 +19,7 @@ export const LivePriceChart: React.FC<LivePriceChartProps> = ({ stock, currency,
   const [selectedTimeframe, setSelectedTimeframe] = useState<Timeframe>('1M');
   const [showMA10, setShowMA10] = useState(true);
   const [showVolume, setShowVolume] = useState(true);
+  const [showVolumeProfile, setShowVolumeProfile] = useState(true);
   const [hoveredPoint, setHoveredPoint] = useState<StockDataPoint | null>(null);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -122,6 +123,95 @@ export const LivePriceChart: React.FC<LivePriceChartProps> = ({ stock, currency,
 
     return { minPrice: minP, maxPrice: maxP, maxVolume: maxV, pricePoints: pricePts, ma10Points: maPts, volumeBars: volBars };
   }, [dataPoints, chartWidth, chartHeight, padding, height, width]);
+
+  /**
+   * Volume Profile (VPVR-style): distribute each session's volume across
+   * horizontal price buckets. Bar length ≈ how many shares changed hands at
+   * that level → a proxy for where investors' holding cost is concentrated.
+   *
+   * Each bar is SPLIT by session direction (TradingView-style):
+   *  - green segment = volume traded on UP days (buying dominance)
+   *  - red segment   = volume traded on DOWN days (selling dominance)
+   *
+   * The highest-volume bucket is the Point of Control (POC) — the strongest
+   * "cost magnet" where the most capital is parked. A dashed reference line
+   * marks the current price: levels below it are held at an average profit,
+   * levels above it at an average loss.
+   */
+  const PRICE_BUCKETS = 28;
+  const VP_MAX_WIDTH = 110; // SVG units, drawn inward from the right edge
+
+  const { volumeProfileRows, poc, currentPriceY } = useMemo(() => {
+    if (!showVolumeProfile || dataPoints.length === 0 || !(maxPrice > minPrice)) {
+      return { volumeProfileRows: [], poc: null as null | { y: number }, currentPriceY: null as null | number };
+    }
+
+    const n = PRICE_BUCKETS;
+    const bucketSize = (maxPrice - minPrice) / n;
+    const totalVols = new Array<number>(n).fill(0);
+    const upVols = new Array<number>(n).fill(0);
+    const downVols = new Array<number>(n).fill(0);
+
+    for (const p of dataPoints) {
+      let idx = Math.floor((p.close - minPrice) / bucketSize);
+      if (!Number.isFinite(idx)) continue;
+      idx = Math.min(n - 1, Math.max(0, idx));
+      totalVols[idx] += p.volume;
+      if (p.close >= p.open) upVols[idx] += p.volume;
+      else downVols[idx] += p.volume;
+    }
+    const maxBucketVol = Math.max(...totalVols);
+    if (maxBucketVol <= 0) return { volumeProfileRows: [], poc: null, currentPriceY: null };
+
+    const refPrice = stock.currentPrice || dataPoints[dataPoints.length - 1].close;
+    const refY =
+      padding.top +
+      chartHeight -
+      ((refPrice - minPrice) / (maxPrice - minPrice)) * chartHeight;
+
+    const rows = totalVols.map((vol, i) => {
+      const low = minPrice + i * bucketSize;
+      const high = low + bucketSize;
+      const center = low + bucketSize / 2;
+      const yTop =
+        padding.top + chartHeight - ((high - minPrice) / (maxPrice - minPrice)) * chartHeight;
+      const h = Math.max(2, (bucketSize / (maxPrice - minPrice)) * chartHeight - 1);
+      const w = Math.max(3, (vol / maxBucketVol) * VP_MAX_WIDTH);
+      // Green hugs the right edge; red extends leftward.
+      const upW = vol > 0 ? Math.min(w, Math.max(0.5, (upVols[i] / vol) * w)) : 0;
+      const downW = w - upW;
+      return {
+        key: i,
+        x: width - padding.right - w,
+        y: yTop,
+        width: w,
+        upWidth: upW,
+        downWidth: downW,
+        height: h,
+        center,
+        volume: vol,
+        upShare: vol > 0 ? upVols[i] / vol : 0,
+        isPoc: vol === maxBucketVol,
+      };
+    });
+
+    const pocRow = rows[totalVols.indexOf(maxBucketVol)];
+    return {
+      volumeProfileRows: rows,
+      poc: { y: pocRow.y + pocRow.height / 2 },
+      currentPriceY: refY,
+    };
+  }, [
+    showVolumeProfile,
+    dataPoints,
+    minPrice,
+    maxPrice,
+    chartHeight,
+    padding.top,
+    padding.right,
+    width,
+    stock.currentPrice,
+  ]);
 
   // Construct SVG Path strings
   const linePath = useMemo(() => {
@@ -292,6 +382,93 @@ export const LivePriceChart: React.FC<LivePriceChartProps> = ({ stock, currency,
             );
           })}
 
+          {/* Volume Profile — holding-cost distribution.
+              Each bar: red = down-day volume (selling), green = up-day volume (buying). */}
+          {showVolumeProfile &&
+            volumeProfileRows.map((row) => (
+              <g key={`vp-${row.key}`}>
+                {/* Selling pressure — left segment */}
+                {row.downWidth > 0.5 && (
+                  <rect
+                    x={row.x}
+                    y={row.y}
+                    width={row.downWidth}
+                    height={row.height}
+                    rx="1"
+                    fill="#ef4444"
+                    opacity={row.isPoc ? 0.55 : 0.35}
+                  >
+                    <title>
+                      {`${formatCurrencyValue(row.center, currency)} · ${t.volume}: ${(
+                        row.volume / 1000000
+                      ).toFixed(1)}M · ▼ ${Math.round((1 - row.upShare) * 100)}%`}
+                    </title>
+                  </rect>
+                )}
+                {/* Buying pressure — right segment, hugging the price axis */}
+                {row.upWidth > 0.5 && (
+                  <rect
+                    x={row.x + row.downWidth}
+                    y={row.y}
+                    width={row.upWidth}
+                    height={row.height}
+                    rx="1"
+                    fill="#10b981"
+                    opacity={row.isPoc ? 0.6 : 0.4}
+                  >
+                    <title>
+                      {`${formatCurrencyValue(row.center, currency)} · ${t.volume}: ${(
+                        row.volume / 1000000
+                      ).toFixed(1)}M · ▲ ${Math.round(row.upShare * 100)}%`}
+                    </title>
+                  </rect>
+                )}
+              </g>
+            ))}
+
+          {/* Current price reference line — below it holders are in profit, above at a loss */}
+          {showVolumeProfile && currentPriceY !== null && (
+            <g pointerEvents="none">
+              <line
+                x1={padding.left}
+                y1={currentPriceY}
+                x2={width - padding.right}
+                y2={currentPriceY}
+                stroke="#e2e8f0"
+                strokeWidth="1"
+                strokeDasharray="2 3"
+                opacity="0.5"
+              />
+            </g>
+          )}
+
+          {/* Point of Control marker — price level with the most traded volume */}
+          {showVolumeProfile && poc && (
+            <g pointerEvents="none">
+              <line
+                x1={padding.left}
+                y1={poc.y}
+                x2={width - padding.right}
+                y2={poc.y}
+                stroke="#fbbf24"
+                strokeWidth="1"
+                strokeDasharray="6 4"
+                opacity="0.65"
+              />
+              <text
+                x={padding.left + 4}
+                y={poc.y - 4}
+                fill="#fbbf24"
+                fontSize="9"
+                fontWeight="bold"
+                fontFamily="monospace"
+                opacity="0.9"
+              >
+                POC
+              </text>
+            </g>
+          )}
+
           {/* Volume bars */}
           {showVolume &&
             volumeBars.map((bar, i) => (
@@ -454,6 +631,29 @@ export const LivePriceChart: React.FC<LivePriceChartProps> = ({ stock, currency,
             <span className="flex items-center gap-1 text-slate-300 font-medium">
               <span className="w-2 h-2 bg-emerald-400/80 inline-block rounded-xs"></span>
               {t.volume}
+            </span>
+          </label>
+
+          <label className="flex items-center gap-1.5 cursor-pointer hover:text-slate-200">
+            <input
+              type="checkbox"
+              checked={showVolumeProfile}
+              onChange={(e) => setShowVolumeProfile(e.target.checked)}
+              className="accent-purple-400 rounded"
+            />
+            <span
+              className="flex items-center gap-1 text-purple-300 font-medium"
+              title={
+                typeof t.volumeProfile === 'string'
+                  ? `${t.volumeProfile}: ▮ green = up-day volume, ▮ red = down-day volume · dashed line = current price`
+                  : undefined
+              }
+            >
+              <span className="inline-flex gap-[2px] items-end">
+                <span className="w-1.5 h-3 bg-emerald-400/80 inline-block rounded-[1px]"></span>
+                <span className="w-1.5 h-3 bg-rose-400/80 inline-block rounded-[1px]"></span>
+              </span>
+              {t.volumeProfile}
             </span>
           </label>
         </div>

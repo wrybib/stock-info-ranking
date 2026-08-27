@@ -53,7 +53,18 @@ export function computeTechnicalMetrics(stock: Stock): MetricInput[] | null {
     return past > 0 ? ((price - past) / past) * 100 : null;
   };
 
-  const mom1m = pctReturn(21);
+  // Return between two lookback points, e.g. t-63 -> t-21.
+  const pctReturnBetween = (fromLb: number, toLb: number): number | null => {
+    if (closes.length < fromLb + 1) return null;
+    const start = closes[closes.length - 1 - fromLb];
+    const end = closes[closes.length - 1 - toLb];
+    return start > 0 ? ((end - start) / start) * 100 : null;
+  };
+
+  // Academic-style momentum (Jegadeesh–Titman): 3-month move EXCLUDING the most
+  // recent month. Avoids short-term-reversal contamination and heavy overlap
+  // with the freshest price action.
+  const mom3x1 = pctReturnBetween(63, 21);
   const mom3m = pctReturn(63);
   const ma50 = sma(closes, 50);
   const ma50Gap = ma50 && ma50 > 0 ? ((price - ma50) / ma50) * 100 : null;
@@ -73,8 +84,8 @@ export function computeTechnicalMetrics(stock: Stock): MetricInput[] | null {
     `${v >= 0 ? '+' : ''}${v.toFixed(1)}${suffix}`;
 
   const metrics: MetricInput[] = [];
-  if (mom1m !== null)
-    metrics.push({ key: 'mom1m', label: 'Momentum 1M', value: mom1m, direction: 1, weight: 0.30, displayValue: fmt(mom1m) });
+  if (mom3x1 !== null)
+    metrics.push({ key: 'mom3x1', label: 'Momentum 3M (ex-last mo.)', value: mom3x1, direction: 1, weight: 0.30, displayValue: fmt(mom3x1) });
   if (mom3m !== null)
     metrics.push({ key: 'mom3m', label: 'Momentum 3M', value: mom3m, direction: 1, weight: 0.25, displayValue: fmt(mom3m) });
   if (ma50Gap !== null)

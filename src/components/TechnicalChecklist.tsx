@@ -23,6 +23,15 @@ export const TechnicalChecklist: React.FC<TechnicalChecklistProps> = ({
   analysis,
   t,
 }) => {
+  // Number of actually-scored factors (informational rows contribute 0)
+  const scoredFactorCount = analysis.checkList.filter(
+    (i) => i.scoreContribution > 0
+  ).length;
+
+  // Show ONLY factors that actually affected the prediction this session —
+  // e.g. Volume stays hidden on non-surge days instead of greying out.
+  const visibleItems = analysis.checkList.filter((i) => i.scoreContribution > 0);
+
   return (
     <div
       id="technical-checklist-panel"
@@ -43,21 +52,28 @@ export const TechnicalChecklist: React.FC<TechnicalChecklistProps> = ({
             </div>
           </div>
           <span className="text-[11px] font-mono font-bold text-cyan-400 bg-cyan-950/40 border border-cyan-800/40 px-2.5 py-1 rounded-lg">
-            4-FACTOR QUANT
+            {scoredFactorCount}-FACTOR QUANT
           </span>
         </div>
 
         {/* Checklist items */}
         <div className="space-y-3">
-          {analysis.checkList.map((item) => {
+          {visibleItems.length === 0 && (
+            <p className="text-xs text-slate-400">{t.neutral}</p>
+          )}
+          {visibleItems.map((item) => {
             const title = (t as any)[item.titleKey] || item.titleKey;
             const desc = (t as any)[item.descriptionKey] || item.descriptionKey;
+            const isNeutral = item.scoreContribution === 0; // informational row
 
             return (
               <div
                 key={item.id}
+                title={(t as any)[item.explanationKey] || undefined}
                 className={`p-3.5 rounded-2xl border transition-all ${
-                  item.isBullish
+                  isNeutral
+                    ? 'bg-slate-800/30 border-slate-700 hover:border-slate-500'
+                    : item.isBullish
                     ? 'bg-emerald-950/20 border-emerald-500/30 hover:border-emerald-500/50'
                     : 'bg-rose-950/20 border-rose-500/30 hover:border-rose-500/50'
                 }`}
@@ -65,7 +81,9 @@ export const TechnicalChecklist: React.FC<TechnicalChecklistProps> = ({
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex items-start gap-3">
                     <div className="mt-0.5 shrink-0">
-                      {item.isBullish ? (
+                      {isNeutral ? (
+                        <Info className="w-5 h-5 text-slate-400" />
+                      ) : item.isBullish ? (
                         <CheckCircle2 className="w-5 h-5 text-emerald-400" />
                       ) : (
                         <XCircle className="w-5 h-5 text-rose-400" />
@@ -78,12 +96,9 @@ export const TechnicalChecklist: React.FC<TechnicalChecklistProps> = ({
                       <div className="text-[11px] text-slate-400 mt-0.5 font-medium">
                         {desc}
                       </div>
-                      <div className="text-[10px] font-mono text-slate-500 mt-1 flex items-center gap-2">
+                      <div className="text-[10px] font-mono text-slate-500 mt-1">
                         <span className="bg-slate-900/80 px-1.5 py-0.5 rounded border border-slate-800 text-slate-300">
                           {item.valueText}
-                        </span>
-                        <span className="truncate max-w-[200px]" title={item.formulaInfo}>
-                          {item.formulaInfo}
                         </span>
                       </div>
                     </div>
@@ -91,13 +106,20 @@ export const TechnicalChecklist: React.FC<TechnicalChecklistProps> = ({
 
                   <div className="shrink-0 text-right">
                     <span
+                      title={isNeutral ? t.neutralTooltip : t.contributionTooltip}
                       className={`inline-block font-mono text-xs font-bold px-2 py-0.5 rounded-md ${
-                        item.isBullish
+                        isNeutral
+                          ? 'bg-slate-800 text-slate-400'
+                          : item.isBullish
                           ? 'bg-emerald-500/20 text-emerald-300'
                           : 'bg-rose-500/20 text-rose-300'
                       }`}
                     >
-                      {item.isBullish ? `+${item.scoreContribution}%` : `-${item.scoreContribution}%`}
+                      {isNeutral
+                        ? '—'
+                        : item.isBullish
+                        ? `+${item.scoreContribution}%`
+                        : `-${item.scoreContribution}%`}
                     </span>
                   </div>
                 </div>

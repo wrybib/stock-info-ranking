@@ -1,7 +1,11 @@
-import { Stock, TechnicalAnalysis, RiskLevel } from '../types';
+import { Stock, StockDataPoint, TechnicalAnalysis, RiskLevel } from '../types';
 
-export function computeRSI(prices: number[], period: number = 14): number {
-  if (prices.length < period + 1) return 50.0;
+/**
+ * Wilder-smoothed RSI. Returns null when there is not enough real history —
+ * callers must skip the factor entirely instead of fabricating a value.
+ */
+export function computeRSI(prices: number[], period: number = 14): number | null {
+  if (prices.length < period + 1) return null;
   
   let gains = 0;
   let losses = 0;
@@ -42,8 +46,9 @@ export function computeMA10(prices: number[]): number {
   return Number((sum / slice.length).toFixed(2));
 }
 
-export function computeVolatility(prices: number[]): number {
-  if (prices.length < 2) return 1.5;
+/** Daily return stdev in percent over the given closes; null if too few points. */
+export function computeVolatility(prices: number[]): number | null {
+  if (prices.length < 3) return null;
   const returns: number[] = [];
   for (let i = 1; i < prices.length; i++) {
     returns.push((prices[i] - prices[i - 1]) / prices[i - 1]);
@@ -51,8 +56,32 @@ export function computeVolatility(prices: number[]): number {
   const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
   const variance = returns.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / (returns.length - 1);
   const stdDev = Math.sqrt(variance);
-  // Annualized or daily percentage
+  // DAILY percent stdev (not annualized — multiply by √252 for the annual view)
   return Number((stdDev * 100).toFixed(2));
+}
+
+/**
+ * Average True Range (Wilder smoothing) in price units. Unlike close-to-close
+ * stdev it accounts for intrabar range and overnight gaps, which makes it the
+ * right basis for "tomorrow's expected range". Returns null when the series
+ * has fewer than period+1 candles.
+ */
+export function computeATR(series: StockDataPoint[], period: number = 14): number | null {
+  if (series.length < period + 1) return null;
+
+  const trs: number[] = [];
+  for (let i = 1; i < series.length; i++) {
+    const { high, low, close } = series[i];
+    const prevClose = series[i - 1].close;
+    trs.push(Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose)));
+  }
+
+  // Seed with the simple mean of the first `period` true ranges, then smooth.
+  let atr = trs.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  for (let i = period; i < trs.length; i++) {
+    atr = (atr * (period - 1) + trs[i]) / period;
+  }
+  return Number(atr.toFixed(4));
 }
 
 export function analyzeStock(
@@ -71,16 +100,26 @@ export function analyzeStock(
   const isPriceAboveMA10 = currentPrice >= ma10;
   const ma10DiffPercent = ma10 > 0 ? ((currentPrice - ma10) / ma10) * 100 : 0;
 
-  // 2. 14-Day RSI
-  const rsi = computeRSI(prices.length >= 15 ? prices : [currentPrice * 0.98, currentPrice * 0.99, currentPrice]);
-  const rsiStatus = rsi <= 32 ? 'oversold' : rsi >= 68 ? 'overbought' : 'neutral';
+  // 2. 14-Day RSI — fed ~100 daily closes so the Wilder seed washes out; a 1M
+  // window leaves RSI dominated by its initialization. Null if too short.
+  const rsi = computeRSI(yearlyCloses.slice(-101));
+  const rsiStatus =
+    rsi === null ? 'neutral' : rsi <= 32 ? 'oversold' : rsi >= 68 ? 'overbought' : 'neutral';
 
-  // 3. Volume Surge
+  // 3. Volume Surge — only genuine surges (≥ 1.5× the 10-day average) count.
+  const VOLUME_SURGE_THRESHOLD = 1.5;
   const volumeRatio = stock.avgVolume10d > 0 ? stock.volume / stock.avgVolume10d : 1.0;
-  const isVolumeSurge = volumeRatio >= 1.15;
+  const isVolumeSurge = volumeRatio >= VOLUME_SURGE_THRESHOLD;
 
-  // 4. Volatility & Standard Deviation
-  const volatility = computeVolatility(prices);
+  // 4. Volatility — daily return stdev (%) over ~90 sessions for stability
+  // (NOT annualized; ×√252 below). Null when history is too short.
+  const volWindow = yearlyCloses.length >= 31 ? yearlyCloses.slice(-90) : prices;
+  const volatility = computeVolatility(volWindow);
+
+  // 4b. ATR(14) from real daily candles — gap-aware range estimate
+  const atr14 = computeATR(yearSeries);
+  const atrPercent =
+    atr14 && currentPrice > 0 ? Number(((atr14 / currentPrice) * 100).toFixed(2)) : null;
 
   // 5. 50-Day Moving Average (intermediate trend, from real 1Y series)
   const sma50 =
@@ -94,9 +133,6 @@ export function analyzeStock(
     prices.length >= 6 && prices[prices.length - 6] > 0
       ? ((currentPrice - prices[prices.length - 6]) / prices[prices.length - 6]) * 100
       : null;
-
-  // Risk multiplier
-  const riskMultiplier = riskLevel === 'High' ? 1.2 : riskLevel === 'Low' ? 0.8 : 1.0;
 
   /* ------------------------------------------------------------------
    * Signal model — calibrated so that a single factor can never dominate.
@@ -117,10 +153,12 @@ export function analyzeStock(
   // Factor B: RSI — dead zone 48-52 (no signal), then linear, capped ±7.
   // Overbought (>70) actually REDUCES the score (mean-reversion risk).
   let rsiScore = 0;
-  if (rsi > 52 && rsi <= 70) rsiScore = ((rsi - 52) / 18) * 7;
-  else if (rsi < 48 && rsi >= 30) rsiScore = -((48 - rsi) / 18) * 7;
-  else if (rsi > 70) rsiScore = -(Math.min(10, (rsi - 70)) * 0.5); // overbought penalty
-  else if (rsi < 30) rsiScore = Math.min(9, ((30 - rsi) * 0.45)); // oversold bounce potential
+  if (rsi !== null) {
+    if (rsi > 52 && rsi <= 70) rsiScore = ((rsi - 52) / 18) * 7;
+    else if (rsi < 48 && rsi >= 30) rsiScore = -((48 - rsi) / 18) * 7;
+    else if (rsi > 70) rsiScore = -(Math.min(10, (rsi - 70)) * 0.5); // overbought penalty
+    else if (rsi < 30) rsiScore = Math.min(9, ((30 - rsi) * 0.45)); // oversold bounce potential
+  }
 
   // Factor C: price vs SMA50 — intermediate trend context, capped ±7.
   const sma50Score = sma50GapPercent !== null ? clamp(sma50GapPercent * 0.35, -7, 7) : 0;
@@ -128,20 +166,20 @@ export function analyzeStock(
   // Factor D: 5-day momentum — recent push/fade, capped ±5.
   const mom5Score = ret5d !== null ? clamp(ret5d * 1.0, -5, 5) : 0;
 
-  // Factor E: volume confirmation — meaningful only on surge days,
-  // small directional lean otherwise.
+  // Factor E: volume confirmation — contributes ONLY on surge days. On ordinary
+  // days it stays silent: a small ±1 lean would just duplicate short momentum.
   const isDayPositive = stock.changePercent >= 0;
   const volumeScore = isVolumeSurge
     ? (isDayPositive ? 1 : -1) * Math.min(6, (volumeRatio - 1) * 10)
-    : isDayPositive
-    ? 1
-    : -1;
+    : 0;
 
-  // Total raw score from Technicals
-  const rawModelTotal = (ma10Score + rsiScore + sma50Score + mom5Score + volumeScore) * riskMultiplier;
+  // Total raw score from Technicals — risk preference is deliberately NOT
+  // applied here (it must not inflate the forecast); it lives in the
+  // position-sizing hint below.
+  const rawModelTotal = ma10Score + rsiScore + sma50Score + mom5Score + volumeScore;
 
-  // Map to a 0-100 score centred at 50. Theoretical bounds ≈ [22, 78];
-  // realistic outputs cluster in [40, 60].
+  // Map to a 0-100 score centred at 50. Pre-clamp bounds are [15, 85];
+  // the final clamp keeps outputs within [25, 75].
   let probabilityRise = Math.round(clamp(50 + rawModelTotal, 25, 75));
   const probabilityDip = 100 - probabilityRise;
 
@@ -149,14 +187,33 @@ export function analyzeStock(
 
   // Target Price Window calculation
   // Daily expected move based on volatility standard deviation & probability skew
-  const expectedReturnPercent = ((probabilityRise - 50) / 50) * (volatility * 0.85);
+  const expectedReturnPercent =
+    ((probabilityRise - 50) / 50) * ((volatility ?? 0) * 0.85);
   const targetChangePercent = Number(expectedReturnPercent.toFixed(2));
   const targetPrice = Number((currentPrice * (1 + targetChangePercent / 100)).toFixed(2));
 
-  // Volatility corridor: Min to Max tomorrow range
-  const dailyRangePercent = Math.max(1.2, volatility * 0.65);
+  // Volatility corridor: ATR(14)-based expected daily range (captures overnight
+  // gaps). Stdev fallback only when real candle history is too short for ATR.
+  const dailyRangePercent = atrPercent ?? Math.max(1.2, (volatility ?? 0) * 0.65);
   const targetPriceLow = Number((targetPrice * (1 - dailyRangePercent / 100)).toFixed(2));
   const targetPriceHigh = Number((targetPrice * (1 + dailyRangePercent / 100)).toFixed(2));
+
+  // Annualized view of the same daily stdev (σ_daily × √252) — display only.
+  const volatilityAnnualized =
+    volatility !== null ? Number((volatility * Math.sqrt(252)).toFixed(1)) : null;
+
+  /* ------------------------------------------------------------------
+   * Position-sizing hint — the proper home for risk preference.
+   * Kelly at an assumed ~1:1 payoff: f = max(0, 2p − 1), where p is the
+   * dominant direction's probability. Scaled by the user's risk tier and
+   * capped at 25% of intended allocation. Near-coin-flip ⇒ near-zero size.
+   * Heuristic guidance only, not investment advice.
+   * ------------------------------------------------------------------ */
+  const pDominant = Math.max(probabilityRise, probabilityDip) / 100;
+  const kellyUnit = Math.max(0, 2 * pDominant - 1);
+  const riskScale = riskLevel === 'High' ? 1.0 : riskLevel === 'Medium' ? 0.6 : 0.35;
+  const suggestedPositionPct =
+    Math.round(Math.min(25, kellyUnit * 100 * riskScale) * 2) / 2;
 
   // Confidence Score & Level
   // Tied to (a) distance from the neutral 50 mark and (b) how many factors
@@ -193,7 +250,7 @@ export function analyzeStock(
       valueText: `P: ${currentPrice} vs MA10: ${ma10}`,
       isBullish: isPriceAboveMA10,
       scoreContribution: Math.round(Math.abs(ma10Score)),
-      formulaInfo: `SMA_{10} = \\frac{1}{10} \\sum_{i=1}^{10} P_{t-i} | Delta: ${ma10DiffPercent >= 0 ? '+' : ''}${ma10DiffPercent.toFixed(1)}%`,
+      explanationKey: 'ma10Expl',
     },
     ...(sma50GapPercent !== null && sma50 !== null
       ? [
@@ -204,19 +261,37 @@ export function analyzeStock(
             valueText: `P: ${currentPrice} vs SMA50: ${sma50.toFixed(2)}`,
             isBullish: sma50GapPercent >= 0,
             scoreContribution: Math.round(Math.abs(sma50Score)),
-            formulaInfo: `SMA_{50} = \\frac{1}{50} \\sum_{i=1}^{50} P_{t-i} | Delta: ${sma50GapPercent >= 0 ? '+' : ''}${sma50GapPercent.toFixed(1)}%`,
+            explanationKey: 'sma50Expl',
           },
         ]
       : []),
-    {
-      id: 'rsi-check',
-      titleKey: 'rsiMomentum',
-      descriptionKey: rsiStatus === 'oversold' ? 'oversold' : rsiStatus === 'overbought' ? 'overbought' : rsi >= 50 ? 'momentumPositive' : 'momentumNegative',
-      valueText: `RSI(14): ${rsi}`,
-      isBullish: rsi < 32 || (rsi >= 50 && rsi < 70),
-      scoreContribution: Math.round(Math.abs(rsiScore)),
-      formulaInfo: `RSI = 100 - \\frac{100}{1 + RS} | 14-period Wilder smoothing`,
-    },
+    ...(rsi !== null
+      ? [
+          {
+            id: 'rsi-check',
+            titleKey: 'rsiMomentum',
+            descriptionKey: rsiStatus === 'oversold' ? 'oversold' : rsiStatus === 'overbought' ? 'overbought' : rsi >= 50 ? 'momentumPositive' : 'momentumNegative',
+            valueText: `RSI(14): ${rsi}`,
+            isBullish: rsi < 32 || (rsi >= 50 && rsi < 70),
+            scoreContribution: Math.round(Math.abs(rsiScore)),
+            explanationKey: 'rsiExpl',
+          },
+        ]
+      : []),
+    ...(ret5d !== null
+      ? [
+          {
+            id: 'momentum-check',
+            titleKey: 'momentumShort',
+            descriptionKey:
+              ret5d > 0 ? 'momRising' : ret5d < 0 ? 'momFading' : 'momFlat',
+            valueText: `Δ ${ret5d >= 0 ? '+' : ''}${ret5d.toFixed(1)}% (5D)`,
+            isBullish: mom5Score >= 0,
+            scoreContribution: Math.round(Math.abs(mom5Score)),
+            explanationKey: 'mom5Expl',
+          },
+        ]
+      : []),
     {
       id: 'volume-check',
       titleKey: 'volumeSurge',
@@ -224,26 +299,20 @@ export function analyzeStock(
       valueText: `${(volumeRatio * 100).toFixed(0)}% of 10D Avg`,
       isBullish: isDayPositive && isVolumeSurge,
       scoreContribution: Math.round(Math.abs(volumeScore)),
-      formulaInfo: `V_{ratio} = \\frac{V_{today}}{V_{avg10d}} = ${volumeRatio.toFixed(2)}x`,
-    },
-    {
-      id: 'range52w-check',
-      titleKey: 'volatilitySentiment',
-      descriptionKey: position52wPercent >= 70 ? 'momentumPositive' : position52wPercent <= 30 ? 'oversold' : 'neutral',
-      valueText: `${position52wPercent}% of 52W Range`,
-      isBullish: position52wPercent >= 55,
-      scoreContribution: Math.round(Math.abs(position52wPercent - 50) / 5),
-      formulaInfo: `Pos = \\frac{P - L_{52w}}{H_{52w} - L_{52w}} = ${position52wPercent}% of 52-week range`,
+      explanationKey: 'volumeExpl',
     },
   ];
 
   return {
     ma10,
     isPriceAboveMA10,
+    sma50,
     rsi,
     rsiStatus,
     volumeRatio,
     volatility,
+    volatilityAnnualized,
+    atr14Percent: atrPercent,
     newsSentimentScore: 0, // no fabricated sentiment is fed to the model
     rawBullishScore: probabilityRise,
     rawBearishScore: probabilityDip,
@@ -254,6 +323,7 @@ export function analyzeStock(
     targetChangePercent,
     targetPriceLow,
     targetPriceHigh,
+    suggestedPositionPct,
     confidenceScore,
     confidenceLevel,
     checkList,

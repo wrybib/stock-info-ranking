@@ -214,8 +214,9 @@ const SUMMARY_MODULES = [
   'recommendationTrend',
 ].join(',');
 
-/** Ownership data: institutional 13F-style holders + insider activity. */
+/** Ownership data: ownership split + institutional 13F-style holders + insider activity. */
 const HOLDINGS_MODULES = [
+  'majorHoldersBreakdown',
   'institutionOwnership',
   'insiderTransactions',
   'netSharePurchaseActivity',

@@ -103,9 +103,9 @@ export const CorePredictionCard: React.FC<CorePredictionCardProps> = ({
                   ? 'bg-purple-600 text-white shadow'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
-              title="Auto: Shows the prevailing higher probability"
+              title={t.autoTooltip}
             >
-              Auto
+              {t.viewAuto}
             </button>
             <button
               type="button"
@@ -116,11 +116,11 @@ export const CorePredictionCard: React.FC<CorePredictionCardProps> = ({
                   ? 'bg-emerald-500 text-slate-950 font-black shadow'
                   : 'text-emerald-400 hover:bg-emerald-950/40'
               }`}
-              title="Rise View: Always view Rise chance and targets"
-            >
+              title={t.riseViewTooltip}
+  >
               <TrendingUp className="w-3 h-3" />
-              Rise View ({analysis.probabilityRise}%)
-            </button>
+              {t.viewRise} ({analysis.probabilityRise}%)
+  </button>
             <button
               type="button"
               id="btn-view-dip"
@@ -130,10 +130,10 @@ export const CorePredictionCard: React.FC<CorePredictionCardProps> = ({
                   ? 'bg-rose-500 text-white font-black shadow'
                   : 'text-rose-400 hover:bg-rose-950/40'
               }`}
-              title="Dip View: Always view Dip probability"
+              title={t.dipViewTooltip}
             >
               <TrendingDown className="w-3 h-3" />
-              Dip View ({analysis.probabilityDip}%)
+              {t.viewDip} ({analysis.probabilityDip}%)
             </button>
           </div>
         </div>
@@ -173,9 +173,7 @@ export const CorePredictionCard: React.FC<CorePredictionCardProps> = ({
             </div>
 
             <p className="text-xs sm:text-sm text-slate-300 mt-2 max-w-md font-medium leading-relaxed">
-              {isRise
-                ? `Technical factors currently lean toward upward momentum for the next session.`
-                : `Technical factors currently lean toward downward pressure for the next session.`}
+              {isRise ? t.leanUpward : t.leanDownward}
             </p>
             <p className="text-[10px] text-slate-500 mt-1.5 max-w-md leading-relaxed">
               {t.modelDisclaimer}
@@ -218,6 +216,22 @@ export const CorePredictionCard: React.FC<CorePredictionCardProps> = ({
                   {formatCurrencyValue(analysis.targetPriceHigh, currency)}
                 </span>
               </div>
+            </div>
+
+            {/* Position-sizing hint (Kelly-lite, scaled by the user's risk level) */}
+            <div className="mt-3 pt-2 border-t border-slate-800 flex items-center justify-between gap-2">
+              <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wide">
+                {t.positionSizeHint}
+              </span>
+              <span
+                className={`text-xs font-black font-mono px-2 py-0.5 rounded-md border ${
+                  analysis.suggestedPositionPct > 0
+                    ? 'bg-cyan-500/15 text-cyan-300 border-cyan-500/40'
+                    : 'bg-slate-700/40 text-slate-400 border-slate-600/60'
+                }`}
+              >
+                {analysis.suggestedPositionPct.toFixed(1)}%
+              </span>
             </div>
           </div>
         </div>

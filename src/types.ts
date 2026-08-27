@@ -39,17 +39,26 @@ export interface IndicatorCheckItem {
   descriptionKey: string;
   valueText: string;
   isBullish: boolean;
-  scoreContribution: number; // e.g. +30%
-  formulaInfo: string;
-}
+  scoreContribution: number; // points contributed to the raw model total (0 = informational)
+  /** i18n key of a plain-language explanation of what this metric means. */
+  explanationKey: string;
+  }
 
 export interface TechnicalAnalysis {
   ma10: number;
   isPriceAboveMA10: boolean;
-  rsi: number;
+  /** 50-day simple moving average; null when < 50 real closes. */
+  sma50: number | null;
+  /** Wilder RSI(14); null when real history is insufficient (never fabricated). */
+  rsi: number | null;
   rsiStatus: 'oversold' | 'neutral' | 'overbought';
   volumeRatio: number; // volume / avgVolume
-  volatility: number; // percentage standard deviation
+  /** Daily return stdev, in percent — NOT annualized. Null when history is too short. */
+  volatility: number | null;
+  /** Same stdev annualized (× √252); null when daily σ is unavailable. */
+  volatilityAnnualized: number | null;
+  /** ATR(14) as a percent of spot; null when < ~15 real daily candles. */
+  atr14Percent: number | null;
   newsSentimentScore: number; // -1 to 1
   rawBullishScore: number; // 0 - 100
   rawBearishScore: number; // 0 - 100
@@ -60,6 +69,8 @@ export interface TechnicalAnalysis {
   targetChangePercent: number;
   targetPriceLow: number;
   targetPriceHigh: number;
+  /** Kelly-lite sizing hint (0–25% of intended allocation), scaled by risk level. */
+  suggestedPositionPct: number;
   confidenceScore: number; // 0 - 100
   confidenceLevel: 'Low' | 'Moderate' | 'High' | 'Extreme';
   checkList: IndicatorCheckItem[];
@@ -142,6 +153,82 @@ export interface RecommendationTrendPoint {
   hold: number;
   sell: number;
   strongSell: number;
+}
+
+/* ------------------------------------------------------------------ */
+/* Ownership & insiders (Yahoo quoteSummary modules)                   */
+/* ------------------------------------------------------------------ */
+
+/** One institutional holder row from Yahoo quoteSummary institutionOwnership (13F-style). */
+export interface InstitutionalHolder {
+  name: string;
+  /** Shares held directly (13F reported position). */
+  shares?: number;
+  /** Percent of shares outstanding held by this institution (7.12 = 7.12%). */
+  pctHeld?: number;
+  /** Market value of the position, raw USD. */
+  value?: number;
+  /** Change vs previous quarter as a percent (+0.85 = +0.85%); undefined when new/no data. */
+  pctChange?: number;
+  /** 13F/13G report period end (ISO). */
+  reportDate?: string;
+}
+
+/** One insider transaction from Yahoo quoteSummary insiderTransactions. */
+export interface InsiderTransaction {
+  filerName: string;
+  /** e.g. "Director", "Officer", "10% Owner". */
+  filerRelation?: string;
+  /** Raw text like "Sale at price 180.13 per share." */
+  transactionText?: string;
+  /** "Buy" / "Sell" / "Award" / "Gift" / "Exercise" — derived from transactionText
+   *  (Yahoo provides no structured type field). */
+  transactionType?: string;
+  /** "Direct" / "Indirect" holding, from Yahoo's D/I ownership flag. */
+  ownership?: string;
+  /** Transaction date (ISO). */
+  startDate?: string;
+  shares?: number;
+  value?: number;
+  /** Pre-formatted dollar amount like "$1.2M" when Yahoo provides one. */
+  moneyText?: string;
+}
+
+/** Aggregate insider buy/sell activity over Yahoo's reporting window (~6 months). */
+export interface NetShareActivity {
+  period?: string;
+  /** Number of purchase transactions filed by insiders. */
+  buysCount?: number;
+  /** Aggregate shares acquired across those purchases. */
+  buysShares?: number;
+  /** Number of sale transactions filed by insiders. */
+  sellsCount?: number;
+  /** Aggregate shares sold across those sales. */
+  sellsShares?: number;
+  /** Yahoo's official net change (shares) — may include grant/exercise adjustments. */
+  netShares?: number;
+  /** Total shares currently held by all insiders. */
+  totalInsiderShares?: number;
+  /** Net change as percent of insider float (-2.4 = net selling of 2.4%). */
+  netPercentBuy?: number;
+}
+
+/** High-level ownership split from Yahoo majorHoldersBreakdown (percent, 7.12 = 7.12%). */
+export interface MajorHolders {
+  insidersPercent?: number;
+  institutionsPercent?: number;
+  institutionsFloatPercent?: number;
+}
+
+/** Ownership snapshot parsed from Yahoo quoteSummary holdings modules. */
+export interface HoldingsSnapshot {
+  ticker: string;
+  majorHolders?: MajorHolders;
+  institutionsCount?: number;
+  ownedPercentInstitutions?: number;
+  holders: InstitutionalHolder[];
+  insiderTransactions: InsiderTransaction[];
+  netActivity?: NetShareActivity;
 }
 
 /** A real headline fetched from Yahoo Finance search news. */

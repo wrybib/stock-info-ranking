@@ -6,7 +6,14 @@
  * Run with: tsx server.js   (tsx handles the .ts import)
  */
 import express from 'express';
-import { fetchChart, fetchFundamentals, fetchNews, fetchOptions, PUBLIC_CACHE_CONTROL } from './api/_lib/yahoo';
+import {
+  fetchChart,
+  fetchFundamentals,
+  fetchNews,
+  fetchOptions,
+  fetchHoldings,
+  PUBLIC_CACHE_CONTROL,
+} from './api/_lib/yahoo';
 
 const app = express();
 const port = Number(process.env.PORT || 3005);
@@ -40,6 +47,15 @@ app.get('/api/yahoo/options/:symbol', async (req, res) => {
   const upstream = await fetchOptions(req.params.symbol);
   res.setHeader('Content-Type', 'application/json');
   res.setHeader('Cache-Control', 'public, s-maxage=600, stale-while-revalidate=1800');
+  res.status(upstream.status).send(upstream.body);
+});
+
+// Institutional holders + insider activity (Yahoo quoteSummary ownership modules).
+app.get('/api/yahoo/holdings/:symbol', async (req, res) => {
+  const upstream = await fetchHoldings(req.params.symbol);
+  res.setHeader('Content-Type', 'application/json');
+  // Ownership data updates quarterly / on insider filings — cache long.
+  res.setHeader('Cache-Control', 'public, s-maxage=3600, stale-while-revalidate=86400');
   res.status(upstream.status).send(upstream.body);
 });
 

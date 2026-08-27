@@ -8,6 +8,7 @@ import {
   LiveNewsItem,
   Fundamentals,
   OptionsSnapshot,
+  HoldingsSnapshot,
 } from './types';
 import { POPULAR_CURRENCIES, formatCurrencyValue } from './utils/currencies';
 import {
@@ -15,11 +16,13 @@ import {
   getTranslation,
   LanguageCode,
 } from './utils/translations';
-import { PRESET_STOCKS } from './data/defaultStocks';
+import { PRESET_STOCKS, makeStubStock } from './data/defaultStocks';
+import { loadJSON, saveJSON, AppSettings } from './utils/storage';
 import { lookupStockWithYahoo } from './data/yahooFinance';
 import { fetchYahooFundamentals } from './data/fundamentals';
 import { fetchLiveNews } from './data/news';
 import { fetchYahooOptions } from './data/options';
+import { fetchYahooHoldings } from './data/holdings';
 import { computeRankings } from './utils/ranking';
 import { analyzeStock } from './utils/technicalAnalysis';
 
@@ -32,6 +35,8 @@ import { NewsSection } from './components/NewsSection';
 import { StockRankings } from './components/StockRankings';
 import { WatchlistSidebar } from './components/WatchlistSidebar';
 import { FundamentalsPanel } from './components/FundamentalsPanel';
+import { TechMetricsPanel } from './components/TechMetricsPanel';
+import { OwnershipPanel } from './components/OwnershipPanel';
 import { SettingsModal } from './components/SettingsModal';
 import { ToastContainer, ToastMessage } from './components/Toast';
 
@@ -54,23 +59,85 @@ export default function App() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  // 1. Settings & Localization State
-  const [currentLanguage, setCurrentLanguage] = useState<LanguageCode>('en');
-  const [customLanguages, setCustomLanguages] = useState<Record<string, CustomLanguage>>({});
-  const [currentCurrency, setCurrentCurrency] = useState<CurrencyInfo>(POPULAR_CURRENCIES[0]); // USD
-  const [displayMode, setDisplayMode] = useState<DisplayMode>('auto');
-  const [riskLevel, setRiskLevel] = useState<RiskLevel>('Medium');
+  // 1. Settings & Localization State — persisted to localStorage across reloads
+  const savedSettings = useMemo<AppSettings>(() => loadJSON('sp.settings', {}), []);
+
+  const [currentLanguage, setCurrentLanguage] = useState<LanguageCode>(savedSettings.language ?? 'en');
+  const [customLanguages, setCustomLanguages] = useState<Record<string, CustomLanguage>>(
+    savedSettings.customLanguages ?? {}
+  );
+  const [currentCurrency, setCurrentCurrency] = useState<CurrencyInfo>(
+    POPULAR_CURRENCIES.find((c) => c.code === savedSettings.currencyCode) ?? POPULAR_CURRENCIES[0] // USD
+  );
+  const [displayMode, setDisplayMode] = useState<DisplayMode>(
+    savedSettings.displayMode === 'rise_only' || savedSettings.displayMode === 'dip_only'
+      ? savedSettings.displayMode
+      : 'auto'
+  );
+  const [riskLevel, setRiskLevel] = useState<RiskLevel>(
+    savedSettings.riskLevel === 'Low' || savedSettings.riskLevel === 'High'
+      ? savedSettings.riskLevel
+      : 'Medium'
+  );
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
-  // 2. Active Stock & Watchlist State
-  // Initial stock: NVDA
-  const [currentStock, setCurrentStock] = useState<Stock>(PRESET_STOCKS[0]);
-  const [watchlist, setWatchlist] = useState<Stock[]>([
-    PRESET_STOCKS[0], // NVDA
-    PRESET_STOCKS[1], // TSLA
-    PRESET_STOCKS[3], // 002230 科大讯飞
-    PRESET_STOCKS[5], // 600848 上海贝岭
-  ]);
+  // Persist settings whenever any of them changes
+  useEffect(() => {
+    saveJSON('sp.settings', {
+      language: currentLanguage,
+      customLanguages,
+      currencyCode: currentCurrency.code,
+      displayMode,
+      riskLevel,
+    });
+  }, [currentLanguage, customLanguages, currentCurrency, displayMode, riskLevel]);
+
+  // 2. Active Stock & Watchlist State — the watchlist itself persists across
+  // reloads (ticker/name/exchange/currency only; market data is always
+  // re-fetched fresh from Yahoo on load).
+  const savedWatchlist = useMemo<Stock[]>(() => {
+    const metas = loadJSON<Array<Partial<{ ticker: string; name: string; exchange: string; currency: string }>>>(
+      'sp.watchlist',
+      []
+    );
+    const valid = Array.isArray(metas)
+      ? metas.filter((m) => typeof m?.ticker === 'string' && m.ticker.trim())
+      : [];
+    if (valid.length === 0) {
+      // First visit (or cleared storage): sensible default list
+      return [
+        PRESET_STOCKS[0], // NVDA
+        PRESET_STOCKS[1], // TSLA
+        PRESET_STOCKS[3], // 002230 iFLYTEK
+        PRESET_STOCKS[5], // 600848 Shanghai Belling
+      ];
+    }
+    return valid.map((m) => {
+      const preset = PRESET_STOCKS.find((p) => p.ticker.toUpperCase() === m.ticker!.toUpperCase());
+      if (preset) return preset;
+      return makeStubStock(m.ticker!, { name: m.name, exchange: m.exchange, currency: m.currency });
+    });
+  }, []);
+
+  const [currentStock, setCurrentStock] = useState<Stock>(() => {
+    const savedTicker = loadJSON<string>('sp.activeTicker', '');
+    const match = savedTicker
+      ? savedWatchlist.find((s) => s.ticker.toUpperCase() === savedTicker.toUpperCase())
+      : undefined;
+    return match ?? savedWatchlist[0] ?? PRESET_STOCKS[0];
+  });
+  const [watchlist, setWatchlist] = useState<Stock[]>(savedWatchlist);
+
+  useEffect(() => {
+    saveJSON(
+      'sp.watchlist',
+      watchlist.map(({ ticker, name, exchange, currency }) => ({ ticker, name, exchange, currency }))
+    );
+  }, [watchlist]);
+
+  useEffect(() => {
+    saveJSON('sp.activeTicker', currentStock.ticker);
+  }, [currentStock.ticker]);
 
   const hydrateStockWithYahoo = useCallback(async (stock: Stock): Promise<Stock> => {
     const result = await lookupStockWithYahoo(stock.ticker);
@@ -85,7 +152,8 @@ export default function App() {
     let isMounted = true;
 
     const loadInitialStocks = async () => {
-      const liveStocks = await Promise.all(PRESET_STOCKS.map((stock) => hydrateStockWithYahoo(stock)));
+      // Hydrate ONLY the entries actually in the watchlist (restored or defaults)
+      const liveStocks = await Promise.all(savedWatchlist.map((stock) => hydrateStockWithYahoo(stock)));
       if (!isMounted) return;
 
       const liveMap = new Map(liveStocks.map((stock) => [stock.ticker.toUpperCase(), stock]));
@@ -98,7 +166,7 @@ export default function App() {
     return () => {
       isMounted = false;
     };
-  }, [hydrateStockWithYahoo]);
+  }, [hydrateStockWithYahoo, savedWatchlist]);
 
   // Live refresh: re-fetch the active stock every 45s so the daily change
   // (price vs previous close) tracks the real market while the page is open.
@@ -159,6 +227,26 @@ export default function App() {
       if (!isMounted) return;
       setFundamentals(result);
       setFundamentalsLoading(false);
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [currentStock.ticker]);
+
+  // 4b-bis. Ownership data (Yahoo holders/insiders) for the active ticker.
+  // A null result renders the panel's explicit "unavailable" state.
+  const [holdings, setHoldings] = useState<HoldingsSnapshot | null>(null);
+  const [holdingsLoading, setHoldingsLoading] = useState<boolean>(true);
+
+  useEffect(() => {
+    let isMounted = true;
+    setHoldingsLoading(true);
+
+    fetchYahooHoldings(currentStock.ticker).then((result) => {
+      if (!isMounted) return;
+      setHoldings(result);
+      setHoldingsLoading(false);
     });
 
     return () => {
@@ -368,7 +456,11 @@ export default function App() {
           />
         </div>
 
-        {/* Company Fundamentals (real Yahoo quoteSummary: valuation, margins, health, analyst targets) */}
+        {/* Technical Metrics snapshot (trend, volume, volatility, 52W range — pure data, not scored) */}
+  <div className="w-full">
+    <TechMetricsPanel stock={currentStock} analysis={technicalAnalysis} currency={currentCurrency} t={t} />
+  </div>
+  {/* Company Fundamentals (real Yahoo quoteSummary: valuation, margins, health, analyst targets) */}
         <div className="w-full">
           <FundamentalsPanel
             fundamentals={fundamentals}
@@ -376,6 +468,11 @@ export default function App() {
             currentPrice={currentStock.currentPrice}
             t={t}
           />
+        </div>
+
+        {/* Ownership & Insiders (real Yahoo quoteSummary: institutional holders, insider activity) */}
+        <div className="w-full">
+          <OwnershipPanel holdings={holdings} loading={holdingsLoading} t={t} />
         </div>
 
         {/* Live Price Graph & Movement (Yahoo Style 1D, 5D, 1M, 6M, YTD, 1Y, 5Y, ALL) */}
@@ -427,7 +524,7 @@ export default function App() {
         displayMode={displayMode}
         onChangeDisplayMode={(mode) => {
           setDisplayMode(mode);
-          showToast(`Display mode: ${mode === 'auto' ? 'Auto (Prevailing)' : mode === 'rise_only' ? 'Rise View' : 'Dip View'}`, 'info');
+          showToast(mode === 'auto' ? t.modeAutoToast : mode === 'rise_only' ? t.modeRiseToast : t.modeDipToast, 'info');
         }}
         riskLevel={riskLevel}
         onChangeRiskLevel={(lvl) => {
