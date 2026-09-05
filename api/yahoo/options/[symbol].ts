@@ -1,4 +1,4 @@
-import { fetchOptions } from '../../_lib/yahoo.ts';
+import { fetchOptions } from '../../../lib/yahoo.ts';
 
 /**
  * Vercel Serverless Function
