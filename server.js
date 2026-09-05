@@ -13,7 +13,7 @@ import {
   fetchOptions,
   fetchHoldings,
   PUBLIC_CACHE_CONTROL,
-} from './lib/yahoo.ts';
+} from './lib/yahoo.js';
 
 const app = express();
 const port = Number(process.env.PORT || 3005);

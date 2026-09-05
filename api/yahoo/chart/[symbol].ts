@@ -1,4 +1,4 @@
-import { fetchChart, PUBLIC_CACHE_CONTROL } from '../../../lib/yahoo';
+import { fetchChart, PUBLIC_CACHE_CONTROL } from '../../../lib/yahoo.js';
 
 /**
  * Vercel Serverless Function
