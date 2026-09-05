@@ -8,25 +8,21 @@ import { fetchHoldings } from '../../_lib/yahoo';
  * purchase activity from Yahoo quoteSummary ownership modules.
  * Requires cookie+crumb handshake — handled in the shared lib.
  */
-export default async function handler(req: any, res: any) {
-  if (req.method === 'OPTIONS') {
-    res.status(204).end();
-    return;
-  }
-  if (req.method !== 'GET') {
-    res.status(405).json({ error: 'Method not allowed' });
-    return;
-  }
+export default {
+  async fetch(request: Request) {
+    if (request.method === 'OPTIONS') return new Response(null, { status: 204 });
+    if (request.method !== 'GET') {
+      return Response.json({ error: 'Method not allowed' }, { status: 405 });
+    }
 
-  const symbol = String(req.query.symbol ?? '').trim();
-  if (!symbol) {
-    res.status(400).json({ error: 'Missing symbol' });
-    return;
-  }
+    const parts = new URL(request.url).pathname.split('/').filter(Boolean);
+    const symbol = decodeURIComponent(parts[parts.length - 1] ?? '').trim();
+    if (!symbol) return Response.json({ error: 'Missing symbol' }, { status: 400 });
 
-  const upstream = await fetchHoldings(symbol);
-  res.setHeader('Content-Type', 'application/json');
-  // Ownership updates quarterly / on insider filings; cache long.
-  res.setHeader('Cache-Control', 'public, s-maxage=3600, stale-while-revalidate=86400');
-  res.status(upstream.status).send(upstream.body);
-}
+    const upstream = await fetchHoldings(symbol);
+    return new Response(upstream.body, {
+      status: upstream.status,
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=86400' },
+    });
+  },
+};
