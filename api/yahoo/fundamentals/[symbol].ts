@@ -1,4 +1,4 @@
-import { fetchFundamentals, PUBLIC_CACHE_CONTROL } from '../../_lib/yahoo';
+import { fetchFundamentals, PUBLIC_CACHE_CONTROL } from '../../_lib/yahoo.ts';
 
 /**
  * Vercel Serverless Function

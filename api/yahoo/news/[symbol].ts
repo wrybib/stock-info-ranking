@@ -1,4 +1,4 @@
-import { fetchNews, PUBLIC_CACHE_CONTROL } from '../../_lib/yahoo';
+import { fetchNews, PUBLIC_CACHE_CONTROL } from '../../_lib/yahoo.ts';
 
 /**
  * Vercel Serverless Function

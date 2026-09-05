@@ -1,4 +1,4 @@
-import { fetchHoldings } from '../../_lib/yahoo';
+import { fetchHoldings } from '../../_lib/yahoo.ts';
 
 /**
  * Vercel Serverless Function
