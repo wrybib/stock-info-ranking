@@ -65,8 +65,8 @@ export const TechMetricsPanel: React.FC<TechMetricsPanelProps> = ({
 }) => {
   const price = stock.currentPrice;
 
-  const ma10Diff =
-    analysis.ma10 > 0 ? ((price - analysis.ma10) / analysis.ma10) * 100 : null;
+  const ema9Diff =
+    analysis.ema9 > 0 ? ((price - analysis.ema9) / analysis.ema9) * 100 : null;
   const sma50Diff =
     analysis.sma50 !== null && analysis.sma50 > 0
       ? ((price - analysis.sma50) / analysis.sma50) * 100
@@ -97,9 +97,9 @@ export const TechMetricsPanel: React.FC<TechMetricsPanelProps> = ({
       {/* Metric grid: trend + volume + volatility */}
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
         <Metric
-          label={t.lblMa10}
-          value={formatCurrencyValue(analysis.ma10, currency)}
-          delta={ma10Diff}
+          label="9 EMA"
+          value={formatCurrencyValue(analysis.ema9, currency)}
+          delta={ema9Diff}
           tooltip={t.ma10Expl}
         />
         <Metric

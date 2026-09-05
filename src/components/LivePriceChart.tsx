@@ -17,7 +17,10 @@ interface LivePriceChartProps {
 
 export const LivePriceChart: React.FC<LivePriceChartProps> = ({ stock, currency, t }) => {
   const [selectedTimeframe, setSelectedTimeframe] = useState<Timeframe>('1M');
-  const [showMA10, setShowMA10] = useState(true);
+  const [showEMA9, setShowEMA9] = useState(true);
+  const [showEMA20, setShowEMA20] = useState(true);
+  const [showSMA50, setShowSMA50] = useState(true);
+  const [showSMA200, setShowSMA200] = useState(true);
   const [showVolume, setShowVolume] = useState(true);
   const [showVolumeProfile, setShowVolumeProfile] = useState(true);
   const [hoveredPoint, setHoveredPoint] = useState<StockDataPoint | null>(null);
@@ -64,9 +67,10 @@ export const LivePriceChart: React.FC<LivePriceChartProps> = ({ stock, currency,
   const firstPoint = dataPoints[0];
   const lastPoint = dataPoints[dataPoints.length - 1];
   const activePoint = hoveredPoint || lastPoint;
+  const livePrice = stock.currentPrice > 0 ? stock.currentPrice : lastPoint?.close ?? 0;
 
-  const isPeriodPositive = lastPoint && firstPoint ? lastPoint.close >= firstPoint.close : true;
-  const periodChange = lastPoint && firstPoint ? lastPoint.close - firstPoint.close : 0;
+  const isPeriodPositive = lastPoint && firstPoint ? livePrice >= firstPoint.close : true;
+  const periodChange = lastPoint && firstPoint ? livePrice - firstPoint.close : 0;
   const periodChangePercent = firstPoint && firstPoint.close > 0 ? (periodChange / firstPoint.close) * 100 : 0;
 
   const chartThemeColor = isPeriodPositive ? '#10b981' : '#ef4444';
@@ -80,9 +84,9 @@ export const LivePriceChart: React.FC<LivePriceChartProps> = ({ stock, currency,
   const chartHeight = height - padding.top - padding.bottom;
   const volumeHeight = 55;
 
-  const { minPrice, maxPrice, maxVolume, pricePoints, ma10Points, volumeBars } = useMemo(() => {
+  const { minPrice, maxPrice, maxVolume, pricePoints, ema9Points, ema20Points, sma50Points, sma200Points, volumeBars } = useMemo(() => {
     if (dataPoints.length === 0) {
-      return { minPrice: 0, maxPrice: 100, maxVolume: 1000, pricePoints: [], ma10Points: [], volumeBars: [] };
+      return { minPrice: 0, maxPrice: 100, maxVolume: 1000, pricePoints: [], ema9Points: [], ema20Points: [], sma50Points: [], sma200Points: [], volumeBars: [] };
     }
 
     let minP = Infinity;
@@ -92,8 +96,12 @@ export const LivePriceChart: React.FC<LivePriceChartProps> = ({ stock, currency,
     dataPoints.forEach((p) => {
       if (p.low < minP) minP = p.low;
       if (p.high > maxP) maxP = p.high;
-      if (p.ma10 && p.ma10 < minP) minP = p.ma10;
-      if (p.ma10 && p.ma10 > maxP) maxP = p.ma10;
+      if (p === lastPoint && livePrice < minP) minP = livePrice;
+      if (p === lastPoint && livePrice > maxP) maxP = livePrice;
+      [p.ema9, p.ema20, p.sma50, p.sma200].forEach((value) => {
+        if (value !== undefined && value < minP) minP = value;
+        if (value !== undefined && value > maxP) maxP = value;
+      });
       if (p.volume > maxV) maxV = p.volume;
     });
 
@@ -103,15 +111,17 @@ export const LivePriceChart: React.FC<LivePriceChartProps> = ({ stock, currency,
 
     const pricePts = dataPoints.map((p, i) => {
       const x = padding.left + (i / (dataPoints.length - 1 || 1)) * chartWidth;
-      const y = padding.top + chartHeight - ((p.close - minP) / (maxP - minP || 1)) * chartHeight;
+      const close = i === dataPoints.length - 1 ? livePrice : p.close;
+      const y = padding.top + chartHeight - ((close - minP) / (maxP - minP || 1)) * chartHeight;
       return { x, y, point: p };
     });
 
-    const maPts = dataPoints.map((p, i) => {
+    const indicatorPoints = (key: 'ema9' | 'ema20' | 'sma50' | 'sma200') => dataPoints.flatMap((p, i) => {
+      const value = p[key];
+      if (value === undefined) return [];
       const x = padding.left + (i / (dataPoints.length - 1 || 1)) * chartWidth;
-      const val = p.ma10 || p.close;
-      const y = padding.top + chartHeight - ((val - minP) / (maxP - minP || 1)) * chartHeight;
-      return { x, y };
+      const y = padding.top + chartHeight - ((value - minP) / (maxP - minP || 1)) * chartHeight;
+      return [{ x, y }];
     });
 
     const volBars = dataPoints.map((p, i) => {
@@ -121,8 +131,8 @@ export const LivePriceChart: React.FC<LivePriceChartProps> = ({ stock, currency,
       return { x, y, height: barH, isUp: p.close >= p.open };
     });
 
-    return { minPrice: minP, maxPrice: maxP, maxVolume: maxV, pricePoints: pricePts, ma10Points: maPts, volumeBars: volBars };
-  }, [dataPoints, chartWidth, chartHeight, padding, height, width]);
+    return { minPrice: minP, maxPrice: maxP, maxVolume: maxV, pricePoints: pricePts, ema9Points: indicatorPoints('ema9'), ema20Points: indicatorPoints('ema20'), sma50Points: indicatorPoints('sma50'), sma200Points: indicatorPoints('sma200'), volumeBars: volBars };
+  }, [dataPoints, chartWidth, chartHeight, padding, height, width, lastPoint, livePrice]);
 
   /**
    * Volume Profile (VPVR-style): distribute each session's volume across
@@ -229,12 +239,12 @@ export const LivePriceChart: React.FC<LivePriceChartProps> = ({ stock, currency,
     return `${linePath} L ${lastX},${bottomY} L ${firstX},${bottomY} Z`;
   }, [linePath, pricePoints, padding.top, chartHeight]);
 
-  const ma10Path = useMemo(() => {
-    if (ma10Points.length === 0) return '';
-    return ma10Points.reduce((acc, pt, i) => {
-      return i === 0 ? `M ${pt.x},${pt.y}` : `${acc} L ${pt.x},${pt.y}`;
-    }, '');
-  }, [ma10Points]);
+  const makeIndicatorPath = (points: { x: number; y: number }[]) =>
+    points.reduce((acc, pt, i) => (i === 0 ? `M ${pt.x},${pt.y}` : `${acc} L ${pt.x},${pt.y}`), '');
+  const ema9Path = makeIndicatorPath(ema9Points);
+  const ema20Path = makeIndicatorPath(ema20Points);
+  const sma50Path = makeIndicatorPath(sma50Points);
+  const sma200Path = makeIndicatorPath(sma200Points);
 
   // Mouse move handler for crosshair
   const handleMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
@@ -281,7 +291,7 @@ export const LivePriceChart: React.FC<LivePriceChartProps> = ({ stock, currency,
           {/* Active Price & Period Change Info */}
           <div className="flex items-baseline gap-3 mt-1">
             <div className="text-2xl font-black text-slate-100 font-mono">
-              {formatCurrencyValue(activePoint ? activePoint.close : stock.currentPrice, currency)}
+              {formatCurrencyValue(hoveredPoint ? activePoint?.close ?? livePrice : livePrice, currency)}
             </div>
             <div
               className={`flex items-center gap-1 text-xs font-bold font-mono ${
@@ -497,17 +507,23 @@ export const LivePriceChart: React.FC<LivePriceChartProps> = ({ stock, currency,
             strokeLinejoin="round"
           />
 
-          {/* MA10 Overlay Line */}
-          {showMA10 && (
-            <path
-              d={ma10Path}
-              fill="none"
-              stroke="#38bdf8"
+          {pricePoints.length > 0 && (
+            <circle
+              cx={pricePoints[pricePoints.length - 1].x}
+              cy={pricePoints[pricePoints.length - 1].y}
+              r="3.5"
+              fill={chartThemeColor}
+              stroke="#f8fafc"
               strokeWidth="1.5"
-              strokeDasharray="5 3"
-              opacity="0.75"
-            />
+            >
+              <title>{`Live price: ${formatCurrencyValue(livePrice, currency)}`}</title>
+            </circle>
           )}
+
+          {showEMA9 && <path d={ema9Path} fill="none" stroke="#facc15" strokeWidth="1.5" strokeDasharray="5 3" opacity="0.9" />}
+          {showEMA20 && <path d={ema20Path} fill="none" stroke="#fb923c" strokeWidth="1.5" strokeDasharray="5 3" opacity="0.9" />}
+          {showSMA50 && <path d={sma50Path} fill="none" stroke="#c084fc" strokeWidth="1.5" strokeDasharray="5 3" opacity="0.9" />}
+          {showSMA200 && <path d={sma200Path} fill="none" stroke="#f472b6" strokeWidth="1.7" strokeDasharray="5 3" opacity="0.9" />}
 
           {/* Hover Crosshair and Indicator Dot */}
           {hoverIndex !== null && pricePoints[hoverIndex] && (
@@ -584,13 +600,17 @@ export const LivePriceChart: React.FC<LivePriceChartProps> = ({ stock, currency,
               <span className="text-slate-300 text-right">
                 {formatCurrencyValue(hoveredPoint.low, currency)}
               </span>
-              {showMA10 && hoveredPoint.ma10 && (
-                <>
-                  <span className="text-sky-400">MA10:</span>
-                  <span className="text-sky-300 text-right">
-                    {formatCurrencyValue(hoveredPoint.ma10, currency)}
-                  </span>
-                </>
+              {showEMA9 && hoveredPoint.ema9 !== undefined && (
+                <><span className="text-yellow-400">9 EMA:</span><span className="text-yellow-300 text-right">{formatCurrencyValue(hoveredPoint.ema9, currency)}</span></>
+              )}
+              {showEMA20 && hoveredPoint.ema20 !== undefined && (
+                <><span className="text-orange-400">20 EMA:</span><span className="text-orange-300 text-right">{formatCurrencyValue(hoveredPoint.ema20, currency)}</span></>
+              )}
+              {showSMA50 && hoveredPoint.sma50 !== undefined && (
+                <><span className="text-purple-400">50 SMA:</span><span className="text-purple-300 text-right">{formatCurrencyValue(hoveredPoint.sma50, currency)}</span></>
+              )}
+              {showSMA200 && hoveredPoint.sma200 !== undefined && (
+                <><span className="text-pink-400">200 SMA:</span><span className="text-pink-300 text-right">{formatCurrencyValue(hoveredPoint.sma200, currency)}</span></>
               )}
               {showVolume && (
                 <>
@@ -608,18 +628,25 @@ export const LivePriceChart: React.FC<LivePriceChartProps> = ({ stock, currency,
       {/* Chart Toggles Footer */}
       <div className="pt-3 border-t border-slate-800/80 flex flex-wrap items-center justify-between text-xs text-slate-400 gap-3">
         <div className="flex items-center gap-4">
-          <label className="flex items-center gap-1.5 cursor-pointer hover:text-slate-200">
-            <input
-              type="checkbox"
-              checked={showMA10}
-              onChange={(e) => setShowMA10(e.target.checked)}
-              className="accent-sky-400 rounded"
-            />
-            <span className="flex items-center gap-1 text-sky-400 font-medium">
-              <span className="w-2.5 h-0.5 bg-sky-400 inline-block"></span>
-              {t.ma10Line}
-            </span>
-          </label>
+          {[
+            ['9 EMA', showEMA9, setShowEMA9, 'accent-yellow-400', 'text-yellow-400', 'bg-yellow-400'],
+            ['20 EMA', showEMA20, setShowEMA20, 'accent-orange-400', 'text-orange-400', 'bg-orange-400'],
+            ['50 SMA', showSMA50, setShowSMA50, 'accent-purple-400', 'text-purple-400', 'bg-purple-400'],
+            ['200 SMA', showSMA200, setShowSMA200, 'accent-pink-400', 'text-pink-400', 'bg-pink-400'],
+          ].map(([label, checked, setChecked, accent, text, dot]) => (
+            <label key={label as string} className="flex items-center gap-1.5 cursor-pointer hover:text-slate-200">
+              <input
+                type="checkbox"
+                checked={checked as boolean}
+                onChange={(e) => (setChecked as React.Dispatch<React.SetStateAction<boolean>>)(e.target.checked)}
+                className={`${accent} rounded`}
+              />
+              <span className={`flex items-center gap-1 ${text} font-medium`}>
+                <span className={`w-2.5 h-0.5 ${dot} inline-block`}></span>
+                {label as string}
+              </span>
+            </label>
+          ))}
 
           <label className="flex items-center gap-1.5 cursor-pointer hover:text-slate-200">
             <input

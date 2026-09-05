@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import { ArrowLeft } from 'lucide-react';
 import {
   Stock,
   RiskLevel,
@@ -30,7 +31,6 @@ import { Header } from './components/Header';
 import { CorePredictionCard } from './components/CorePredictionCard';
 import { TechnicalChecklist } from './components/TechnicalChecklist';
 import { LivePriceChart } from './components/LivePriceChart';
-import { ConfidenceMeter } from './components/ConfidenceMeter';
 import { NewsSection } from './components/NewsSection';
 import { StockRankings } from './components/StockRankings';
 import { WatchlistSidebar } from './components/WatchlistSidebar';
@@ -127,6 +127,7 @@ export default function App() {
     return match ?? savedWatchlist[0] ?? PRESET_STOCKS[0];
   });
   const [watchlist, setWatchlist] = useState<Stock[]>(savedWatchlist);
+  const [appView, setAppView] = useState<'watchlist' | 'detail'>('watchlist');
 
   useEffect(() => {
     saveJSON(
@@ -309,6 +310,7 @@ export default function App() {
 
   // Handler for adding/selecting new stock
   const handleSelectStock = async (stock: Stock) => {
+    setAppView('detail');
     const hydratedStock = await hydrateStockWithYahoo(stock);
     setCurrentStock(hydratedStock);
     showToast(`Loaded ${hydratedStock.ticker} (${hydratedStock.name})`, 'info');
@@ -346,6 +348,7 @@ export default function App() {
     }
 
     const liveStock = result.stock;
+    setAppView('detail');
     setCurrentStock(liveStock);
     showToast(`Analyzed symbol ${liveStock.ticker}`, 'info');
     setWatchlist((prev) => {
@@ -401,108 +404,103 @@ export default function App() {
       />
 
       {/* Main Content Layout */}
-      <main className="max-w-7xl mx-auto px-4 lg:px-6 py-6 space-y-6">
-        {/* Top Analytics Grid: Sidebar Watchlist + Core Prediction Card + Technical Checklist */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
-          {/* Watchlist Sidebar (Col 3) */}
-          <div className="lg:col-span-3 order-2 lg:order-1">
-            <WatchlistSidebar
-              watchlist={watchlist}
-              activeStock={currentStock}
-              onSelectStock={handleSelectStock}
-              onAddStock={handleAddStockToWatchlist}
-              onRemoveStock={handleRemoveStockFromWatchlist}
-              onSearchSymbol={handleSearchSymbol}
-              currency={currentCurrency}
-              t={t}
-            />
+      <main className="max-w-7xl mx-auto px-3 sm:px-4 lg:px-6 py-4 sm:py-6">
+        {appView === 'watchlist' ? (
+          <div className="space-y-5 sm:space-y-6">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-6 items-stretch">
+              <div className="lg:col-span-4">
+                <WatchlistSidebar
+                  watchlist={watchlist}
+                  activeStock={currentStock}
+                  onSelectStock={handleSelectStock}
+                  onAddStock={handleAddStockToWatchlist}
+                  onRemoveStock={handleRemoveStockFromWatchlist}
+                  onSearchSymbol={handleSearchSymbol}
+                  currency={currentCurrency}
+                  t={t}
+                />
+              </div>
+              <div className="lg:col-span-8">
+                <StockRankings
+                  ranked={rankedStocks}
+                  loading={rankingLoading}
+                  activeTicker={currentStock.ticker}
+                  onSelectStock={(ticker) => {
+                    const target = watchlist.find(
+                      (s) => s.ticker.toUpperCase() === ticker.toUpperCase()
+                    );
+                    if (target) handleSelectStock(target);
+                  }}
+                  t={t}
+                />
+              </div>
+            </div>
           </div>
+        ) : (
+          <div className="space-y-5 sm:space-y-6">
+            <div className="flex items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={() => setAppView('watchlist')}
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-700 bg-slate-900/80 text-sm font-semibold text-slate-200 hover:border-emerald-500/60 hover:text-emerald-300 transition-colors"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                {t.watchlist}
+              </button>
+              <span className="text-xs font-mono text-slate-500">{currentStock.ticker}</span>
+            </div>
 
-          {/* Core Prediction Matrix Card (Col 5) */}
-          <div className="lg:col-span-5 order-1 lg:order-2">
-            <CorePredictionCard
-              stock={currentStock}
-              analysis={technicalAnalysis}
-              displayMode={displayMode}
-              onChangeDisplayMode={setDisplayMode}
-              currency={currentCurrency}
-              t={t}
-            />
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-6 items-stretch">
+              <aside className="hidden lg:block lg:col-span-3">
+                <WatchlistSidebar
+                  watchlist={watchlist}
+                  activeStock={currentStock}
+                  onSelectStock={handleSelectStock}
+                  onAddStock={handleAddStockToWatchlist}
+                  onRemoveStock={handleRemoveStockFromWatchlist}
+                  onSearchSymbol={handleSearchSymbol}
+                  currency={currentCurrency}
+                  t={t}
+                />
+              </aside>
+
+              <div className="lg:col-span-9 space-y-5 sm:space-y-6">
+                <div className="grid grid-cols-1 xl:grid-cols-5 gap-5 sm:gap-6 items-stretch">
+                  <div className="xl:col-span-3">
+                    <CorePredictionCard
+                      stock={currentStock}
+                      analysis={technicalAnalysis}
+                      displayMode={displayMode}
+                      onChangeDisplayMode={setDisplayMode}
+                      currency={currentCurrency}
+                      t={t}
+                    />
+                  </div>
+                  <div className="xl:col-span-2">
+                    <TechnicalChecklist stock={currentStock} analysis={technicalAnalysis} t={t} />
+                  </div>
+                </div>
+
+                <TechMetricsPanel stock={currentStock} analysis={technicalAnalysis} currency={currentCurrency} t={t} />
+                <LivePriceChart stock={currentStock} currency={currentCurrency} t={t} />
+                <FundamentalsPanel
+                  fundamentals={fundamentals}
+                  loading={fundamentalsLoading}
+                  currentPrice={currentStock.currentPrice}
+                  t={t}
+                />
+                <OwnershipPanel holdings={holdings} loading={holdingsLoading} t={t} />
+                <NewsSection
+                  stock={currentStock}
+                  newsList={liveNews}
+                  loading={newsLoading}
+                  onRefresh={handleRefreshNews}
+                  t={t}
+                />
+              </div>
+            </div>
           </div>
-
-          {/* Technical Indicator Checklist (Col 4) */}
-          <div className="lg:col-span-4 order-3">
-            <TechnicalChecklist
-              stock={currentStock}
-              analysis={technicalAnalysis}
-              t={t}
-            />
-          </div>
-        </div>
-
-        {/* Cross-Sectional Watchlist Ranking (z-scores: technical + fundamental + options) */}
-        <div className="w-full">
-          <StockRankings
-            ranked={rankedStocks}
-            loading={rankingLoading}
-            activeTicker={currentStock.ticker}
-            onSelectStock={(ticker) => {
-              const target = watchlist.find(
-                (s) => s.ticker.toUpperCase() === ticker.toUpperCase()
-              );
-              if (target) handleSelectStock(target);
-            }}
-            t={t}
-          />
-        </div>
-
-        {/* Technical Metrics snapshot (trend, volume, volatility, 52W range — pure data, not scored) */}
-  <div className="w-full">
-    <TechMetricsPanel stock={currentStock} analysis={technicalAnalysis} currency={currentCurrency} t={t} />
-  </div>
-  {/* Company Fundamentals (real Yahoo quoteSummary: valuation, margins, health, analyst targets) */}
-        <div className="w-full">
-          <FundamentalsPanel
-            fundamentals={fundamentals}
-            loading={fundamentalsLoading}
-            currentPrice={currentStock.currentPrice}
-            t={t}
-          />
-        </div>
-
-        {/* Ownership & Insiders (real Yahoo quoteSummary: institutional holders, insider activity) */}
-        <div className="w-full">
-          <OwnershipPanel holdings={holdings} loading={holdingsLoading} t={t} />
-        </div>
-
-        {/* Live Price Graph & Movement (Yahoo Style 1D, 5D, 1M, 6M, YTD, 1Y, 5Y, ALL) */}
-        <div className="w-full">
-          <LivePriceChart
-            stock={currentStock}
-            currency={currentCurrency}
-            t={t}
-          />
-        </div>
-
-        {/* AI Confidence Meter (live signal agreement; no simulated track record) */}
-        <div className="w-full">
-          <ConfidenceMeter
-            stock={currentStock}
-            analysis={technicalAnalysis}
-            t={t}
-          />
-        </div>
-
-        {/* Live Market News (real Yahoo headlines) */}
-        <div className="w-full">
-          <NewsSection
-            stock={currentStock}
-            newsList={liveNews}
-            loading={newsLoading}
-            onRefresh={handleRefreshNews}
-            t={t}
-          />
-        </div>
+        )}
       </main>
 
       {/* Settings Modal (Language Switcher, Add Any Custom Language, Currency search & converter, Display mode) */}

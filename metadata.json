@@ -1,6 +1,5 @@
 {
   "name": "Stock Predictor & Analytics Suite",
   "description": "Professional stock prediction and analytics dashboard with technical indicator algorithms, paper trading, and multi-language support.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "requestFramePermissions": []
 }

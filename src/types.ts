@@ -10,6 +10,10 @@ export interface StockDataPoint {
   close: number;
   volume: number;
   ma10?: number;
+  ema9?: number;
+  ema20?: number;
+  sma50?: number;
+  sma200?: number;
 }
 
 export type Timeframe = '1D' | '5D' | '1M' | '6M' | 'YTD' | '1Y' | '5Y' | 'ALL';
@@ -45,8 +49,8 @@ export interface IndicatorCheckItem {
   }
 
 export interface TechnicalAnalysis {
-  ma10: number;
-  isPriceAboveMA10: boolean;
+  ema9: number;
+  isPriceAboveEMA9: boolean;
   /** 50-day simple moving average; null when < 50 real closes. */
   sma50: number | null;
   /** Wilder RSI(14); null when real history is insufficient (never fabricated). */
@@ -71,8 +75,6 @@ export interface TechnicalAnalysis {
   targetPriceHigh: number;
   /** Kelly-lite sizing hint (0–25% of intended allocation), scaled by risk level. */
   suggestedPositionPct: number;
-  confidenceScore: number; // 0 - 100
-  confidenceLevel: 'Low' | 'Moderate' | 'High' | 'Extreme';
   checkList: IndicatorCheckItem[];
 }
 

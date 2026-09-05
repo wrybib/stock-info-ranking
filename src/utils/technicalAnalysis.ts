@@ -39,11 +39,14 @@ export function computeRSI(prices: number[], period: number = 14): number | null
   return Number(rsi.toFixed(1));
 }
 
-export function computeMA10(prices: number[]): number {
+export function computeEMA9(prices: number[]): number {
   if (prices.length === 0) return 0;
-  const slice = prices.slice(-10);
-  const sum = slice.reduce((a, b) => a + b, 0);
-  return Number((sum / slice.length).toFixed(2));
+  const multiplier = 2 / (9 + 1);
+  let ema = prices[0];
+  for (let i = 1; i < prices.length; i++) {
+    ema = prices[i] * multiplier + ema * (1 - multiplier);
+  }
+  return Number(ema.toFixed(2));
 }
 
 /** Daily return stdev in percent over the given closes; null if too few points. */
@@ -95,10 +98,10 @@ export function analyzeStock(
   const yearlyCloses = yearSeries.map((p) => p.close);
   const currentPrice = stock.currentPrice;
 
-  // 1. 10-Day Moving Average (short-term trend)
-  const ma10 = computeMA10(prices.length > 0 ? prices : [currentPrice]);
-  const isPriceAboveMA10 = currentPrice >= ma10;
-  const ma10DiffPercent = ma10 > 0 ? ((currentPrice - ma10) / ma10) * 100 : 0;
+  // 1. 9-period Exponential Moving Average (short-term trend)
+  const ema9 = computeEMA9(prices.length > 0 ? prices : [currentPrice]);
+  const isPriceAboveEMA9 = currentPrice >= ema9;
+  const ema9DiffPercent = ema9 > 0 ? ((currentPrice - ema9) / ema9) * 100 : 0;
 
   // 2. 14-Day RSI — fed ~100 daily closes so the Wilder seed washes out; a 1M
   // window leaves RSI dominated by its initialization. Null if too short.
@@ -147,8 +150,8 @@ export function analyzeStock(
    * ------------------------------------------------------------------ */
   const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
-  // Factor A: price vs MA10 — magnitude-scaled, hard-capped at ±8.
-  const ma10Score = clamp(ma10DiffPercent * 1.2, -8, 8);
+  // Factor A: price vs EMA9 — magnitude-scaled, hard-capped at ±8.
+  const ema9Score = clamp(ema9DiffPercent * 1.2, -8, 8);
 
   // Factor B: RSI — dead zone 48-52 (no signal), then linear, capped ±7.
   // Overbought (>70) actually REDUCES the score (mean-reversion risk).
@@ -176,7 +179,7 @@ export function analyzeStock(
   // Total raw score from Technicals — risk preference is deliberately NOT
   // applied here (it must not inflate the forecast); it lives in the
   // position-sizing hint below.
-  const rawModelTotal = ma10Score + rsiScore + sma50Score + mom5Score + volumeScore;
+  const rawModelTotal = ema9Score + rsiScore + sma50Score + mom5Score + volumeScore;
 
   // Map to a 0-100 score centred at 50. Pre-clamp bounds are [15, 85];
   // the final clamp keeps outputs within [25, 75].
@@ -215,27 +218,6 @@ export function analyzeStock(
   const suggestedPositionPct =
     Math.round(Math.min(25, kellyUnit * 100 * riskScale) * 2) / 2;
 
-  // Confidence Score & Level
-  // Tied to (a) distance from the neutral 50 mark and (b) how many factors
-  // agree with the net direction. A near-neutral model honestly reports LOW
-  // confidence instead of a fake 60% floor.
-  const factorList = [ma10Score, rsiScore, sma50Score, mom5Score, volumeScore];
-  const netSign = rawModelTotal >= 0 ? 1 : -1;
-  const agreeingFactors = factorList.filter(
-    (f) => Math.abs(f) > 0.5 && (f >= 0 ? 1 : -1) === netSign
-  ).length;
-
-  const confidenceScore = clamp(
-    Math.round(38 + Math.abs(rawModelTotal) * 1.1 + agreeingFactors * 3),
-    30,
-    90
-  );
-  let confidenceLevel: 'Low' | 'Moderate' | 'High' | 'Extreme' = 'Moderate';
-  if (confidenceScore >= 78) confidenceLevel = 'Extreme';
-  else if (confidenceScore >= 65) confidenceLevel = 'High';
-  else if (confidenceScore >= 50) confidenceLevel = 'Moderate';
-  else confidenceLevel = 'Low';
-
   // Position within the real 52-week range (0 = at low, 100 = at high)
   const range52w = stock.high52w - stock.low52w;
   const position52wPercent =
@@ -244,12 +226,12 @@ export function analyzeStock(
   // Technical Checklist Items with clear mathematical tags
   const checkList = [
     {
-      id: 'ma10-check',
+      id: 'ema9-check',
       titleKey: 'ma10Crossover',
-      descriptionKey: isPriceAboveMA10 ? 'aboveMA10' : 'belowMA10',
-      valueText: `P: ${currentPrice} vs MA10: ${ma10}`,
-      isBullish: isPriceAboveMA10,
-      scoreContribution: Math.round(Math.abs(ma10Score)),
+      descriptionKey: isPriceAboveEMA9 ? 'aboveMA10' : 'belowMA10',
+      valueText: `P: ${currentPrice} vs EMA9: ${ema9}`,
+      isBullish: isPriceAboveEMA9,
+      scoreContribution: Math.round(Math.abs(ema9Score)),
       explanationKey: 'ma10Expl',
     },
     ...(sma50GapPercent !== null && sma50 !== null
@@ -304,8 +286,8 @@ export function analyzeStock(
   ];
 
   return {
-    ma10,
-    isPriceAboveMA10,
+    ema9,
+    isPriceAboveEMA9,
     sma50,
     rsi,
     rsiStatus,
@@ -324,8 +306,6 @@ export function analyzeStock(
     targetPriceLow,
     targetPriceHigh,
     suggestedPositionPct,
-    confidenceScore,
-    confidenceLevel,
     checkList,
   };
 }

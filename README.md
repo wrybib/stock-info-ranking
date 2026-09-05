@@ -7,8 +7,8 @@ A real-time stock analysis and prediction dashboard built with **React 19 + Vite
 ## ✨ Features
 
 - **Core Prediction Matrix** — probability of rise/dip with target price windows, driven by real market data (no simulated sentiment)
-- **Technical Checklist** — MA10 crossover, RSI momentum, volume surge vs 10-day average, volatility sentiment, price vs SMA50, each with transparent scoring contributions
-- **Live Price Chart** — intraday to 5Y timeframes (`1D / 5D / 1M / 6M / YTD / 1Y / 5Y / ALL`) with MA10 overlay and volume bars
+- **Technical Checklist** — 9 EMA trend, RSI momentum, volume surge vs 10-day average, volatility context, price vs SMA50, each with transparent scoring contributions
+- **Live Price Chart** — intraday to ALL timeframes (`1D / 5D / 1M / 6M / YTD / 1Y / 5Y / ALL`) with 9 EMA, 20 EMA, 50 SMA, 200 SMA, and volume bars
 - **Company Fundamentals** — valuation multiples, profitability margins, growth, financial health, analyst consensus targets from Yahoo `quoteSummary`
 - **Watchlist Rankings** — cross-sectional z-score ranking across your list combining technical (45%), fundamental (35%), and options-flow (20%) signals; missing categories are excluded and weights renormalized
 - **Options Snapshot** — ATM implied volatility and put/call open-interest skew per ticker
